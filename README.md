@@ -1,26 +1,107 @@
-# erqos-firmware
+# erqos-firmware — RO Skid Controller
 
-Firmware for the **Erqos EQSP32** — an ESP32-S3-based industrial IoT / micro-PLC
-controller. The dev environment is fully managed by [pixi](https://pixi.sh): a
-single `pixi run setup` pulls down a pinned, self-contained Arduino toolchain so
-nothing touches your global Arduino install.
+Firmware for a single-pass **reverse-osmosis water-treatment skid** driven by one
+**Erqos EQSP32** (ESP32-S3 industrial PLC). It implements
+[`RO-Skid-Control-Specification.docx`](RO-Skid-Control-Specification.docx): an
+8-state machine with safety interlocks, latched faults, timed sequences
+(settling, periodic flush, TDS trip, min on/off), level/pressure hysteresis,
+membrane-fouling detection and a priority-based RGB status indicator.
+
+The dev environment is managed by [pixi](https://pixi.sh). `pixi run setup` pulls
+a pinned, self-contained Arduino toolchain (nothing touches your global install);
+`pixi run test` builds and runs the control logic natively on your machine.
 
 ## What's here
 
 ```
 .
-├── pixi.toml            # environment + task definitions (start here)
+├── pixi.toml                  # environment + tasks (start here)
 ├── firmware/
-│   └── firmware.ino     # the sketch you edit — a working EQSP32 starter
-├── EQSP32/              # the vendor library (cloned from Erqos/EQSP32), used in place
-├── scripts/             # task implementations invoked by pixi
-└── .arduino/            # downloaded toolchain, cores & build output (git-ignored)
+│   ├── firmware.ino           # thin Arduino entry: wires EQSP32 I/O -> controller
+│   └── src/                   # the control logic
+│       ├── ro_types.h         # State / Fault / Warnings / Params (spec §11 setpoints)
+│       ├── io_interface.h     # ISkidIO — the hardware seam + channel map (spec §3)
+│       ├── sensors.{h,cpp}    # sensor scaling + flow integration (spec §4)
+│       ├── rgb_indicator.{h,cpp} # RGB priority + blink/fault codes (spec §9/§10)
+│       ├── ro_controller.{h,cpp} # the state machine (spec §5-§10) — pure C++
+│       └── eqsp32_io.{h,cpp}  # production ISkidIO adapter over the EQSP32
+├── tests/                     # native unit + scenario suite (doctest)
+├── EQSP32/                    # vendor library (Erqos/EQSP32), used in place
+├── scripts/                   # task implementations invoked by pixi
+└── .arduino/  build/          # toolchain, cores & build output (git-ignored)
 ```
+
+## Architecture — why it's testable
+
+The control logic is **platform-independent C++** that never includes
+`<Arduino.h>` / `<EQSP32.h>`. It reaches hardware through two seams:
+
+1. **I/O seam** — `ISkidIO` (in [io_interface.h](firmware/src/io_interface.h)):
+   every sensor read / actuator write goes through this interface, in EQSP32
+   `readPin()` units. Production uses `Eqsp32SkidIO`; tests use a fake.
+2. **Time seam** — the controller takes the current time as a parameter
+   (`tick(now_ms)`); it never calls `millis()`. So a 60-minute flush timer or a
+   10-minute TDS trip is exercised in microseconds, deterministically.
+
+`firmware/src/*.cpp` are compiled into the firmware by `arduino-cli`. The host
+test build compiles **only** the portable core (`ro_controller`, `sensors`,
+`rgb_indicator`) — never `eqsp32_io.cpp` — so if the core ever picked up an
+Arduino dependency, `pixi run test` would fail. That's the guardrail.
+
+## Testing
+
+Two layers, both run by `pixi run test` (no hardware, milliseconds):
+
+- **Unit tests** — sensor scaling & fault sentinels, the flow integrator, RGB
+  priority + blink/fault-code patterns, and each permissive / timer / hysteresis
+  edge / fault in isolation (via a scriptable `FakeSkidIO` and a manual clock).
+- **Scenario tests** — a `PlantModel` simulates the skid's physics (pump+valves →
+  pressure ramps, tank fills, supply drains, flow ≈ 10 L/min; flush drops
+  pressure) and feeds it back through the *same* `ISkidIO` the real adapter uses.
+  Scenarios read like real operation: power-on → start → run → tank-full stop →
+  drain → restart; periodic flush; supply-low pause/resume; every fault + reset.
+
+Current: **41 test cases / 306 assertions, ~99% line + 100% function coverage**
+of the control core (`pixi run coverage`).
+
+## Quick start
+
+```bash
+pixi run setup      # one-time: fetch arduino-cli, ESP32 core 2.0.17, RadioLib (~250 MB)
+pixi run test       # build + run the control-logic test suite (no hardware)
+pixi run build      # compile the firmware for the EQSP32
+# plug the EQSP32 in over USB, then:
+pixi run flash      # build + upload
+pixi run monitor    # serial console @ 115200 baud (one-line status per second)
+```
+
+## Tasks
+
+| Command            | Does |
+|--------------------|------|
+| `pixi run setup`   | Install the toolchain into `.arduino/` (idempotent). |
+| `pixi run test`    | Build & run the native unit + scenario suite. |
+| `pixi run coverage`| Run tests and print a coverage report for the control core. |
+| `pixi run build`   | Compile `firmware/` for the EQSP32. |
+| `pixi run upload`  | Flash the last build (auto-detects the port, or set `PORT`). |
+| `pixi run flash`   | `build` then `upload`. |
+| `pixi run monitor` | Open the serial monitor at 115200 baud. |
+| `pixi run boards`  | List connected boards / serial ports. |
+| `pixi run clean`   | Remove build artifacts. |
+
+## Tuning setpoints
+
+Every spec §11 setpoint is a named, defaulted field in `Params`
+([ro_types.h](firmware/src/ro_types.h)). The spec §13 "open points to confirm"
+(flow band, dry-run threshold, flash-rate mapping, debounce, fouling-stop
+behaviour) are all one-line edits there — a unit test asserts the defaults match
+the spec so changes are deliberate. Board/port/version knobs live in the
+`[activation.env]` block of `pixi.toml`.
 
 ## Toolchain
 
 This is an **Arduino library project**, so we build it the way Erqos ships it —
-with `arduino-cli` and the official ESP32 Arduino core, driven by pixi.
+`arduino-cli` + the official ESP32 Arduino core, driven by pixi.
 
 | Component        | Version  | Why pinned |
 |------------------|----------|------------|
@@ -29,59 +110,18 @@ with `arduino-cli` and the official ESP32 Arduino core, driven by pixi.
 | RadioLib         | 7.7.1    | only third-party header `EQSP32.h` includes (LoRa) |
 | Board (FQBN)     | `esp32:esp32:esp32s3` | ESP32S3 Dev Module |
 | Flash / Partition | `8M` / `8M with spiffs` (`default_8MB`) | per Erqos quickstart guide |
-
-Everything lives under `./.arduino/` — delete that folder to start clean.
-
-## Quick start
-
-```bash
-pixi run setup      # one-time: fetch arduino-cli, ESP32 core 2.0.17, RadioLib (~250 MB)
-pixi run build      # compile firmware/
-# plug the EQSP32 in over USB, then:
-pixi run flash      # build + upload
-pixi run monitor    # serial console @ 115200 baud
-```
-
-## Tasks
-
-| Command            | Does |
-|--------------------|------|
-| `pixi run setup`   | Install the toolchain into `.arduino/` (idempotent). |
-| `pixi run build`   | Compile `firmware/` for the EQSP32. |
-| `pixi run upload`  | Flash the last build (auto-detects the port, or set `PORT`). |
-| `pixi run flash`   | `build` then `upload`. |
-| `pixi run monitor` | Open the serial monitor at 115200 baud. |
-| `pixi run boards`  | List connected boards / serial ports. |
-| `pixi run clean`   | Remove build artifacts. |
+| host tests       | conda-forge `cxx-compiler` + `cmake` + `ninja` + `doctest` | native build, no hardware |
 
 ### Choosing the serial port
 
-Port auto-detection picks the only connected board. If you have several, set it:
+Auto-detection picks the only connected board. With several boards, set it:
 
 ```bash
-PORT=/dev/cu.usbserial-XXXX pixi run flash
+PORT=/dev/cu.usbserial-XXXX pixi run flash    # find the name with: pixi run boards
 ```
-
-(Find the name with `pixi run boards`.) You can also change the default `PORT`,
-`FQBN`, and pinned versions in the `[activation.env]` block of `pixi.toml`.
-
-## Writing firmware
-
-Edit [`firmware/firmware.ino`](firmware/firmware.ino). The starter wires up a
-digital input, a relay, a PWM output, the buzzer and the user button — see the
-EQSP32 API summary at the top of [`EQSP32/src/EQSP32.h`](EQSP32/src/EQSP32.h) and
-the 36 reference sketches in [`EQSP32/examples/`](EQSP32/examples/).
-
-To try an example instead, point a build at it:
-
-```bash
-pixi run -- bash -c '"$ARDUINO_CLI" compile --fqbn "$FQBN" --library "$EQSP32_LIB" EQSP32/examples/EQSP32_CAN-Bus_Demo'
-```
-
-> Note: most examples need real I/O wired up and (for WiFi/MQTT/BLE demos)
-> provisioning via the **EQConnect** mobile app; they compile regardless.
 
 ## References
 
+- Control specification: [`RO-Skid-Control-Specification.docx`](RO-Skid-Control-Specification.docx)
 - EQSP32 library & examples: <https://github.com/Erqos/EQSP32>
 - EQSP32 quickstart guide: <https://erqos.com/resources/quickstart-guide/>

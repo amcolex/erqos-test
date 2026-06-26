@@ -4,3 +4,6 @@
 
 # Self-contained Arduino toolchain + build output (managed by `pixi run setup`)
 .arduino/
+
+# Host test build output
+build/

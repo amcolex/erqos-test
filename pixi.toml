@@ -28,6 +28,12 @@ PORT = "auto"
 # fetches a pinned release with curl. Everything else (the xtensa-esp32s3
 # toolchain, esptool, the ESP32 core) is then managed by arduino-cli.
 curl = ">=8"
+# Host toolchain for the native unit/scenario test suite (tests/).
+cxx-compiler = "*"
+cmake = ">=3.20"
+ninja = "*"
+doctest = "*"
+gcovr = "*"      # coverage report for the control core
 
 [tasks]
 setup = { cmd = "bash scripts/setup.sh", description = "One-time: install arduino-cli, ESP32 core 2.0.17 and RadioLib into .arduino/" }
@@ -36,4 +42,6 @@ upload = { cmd = "bash scripts/upload.sh", description = "Flash the last build t
 flash = { depends-on = ["build", "upload"], description = "Build then flash" }
 monitor = { cmd = "bash scripts/monitor.sh", description = "Open the serial monitor at 115200 baud" }
 boards = { cmd = "bash scripts/boards.sh", description = "List connected boards / serial ports" }
+test = { cmd = "bash scripts/test.sh", description = "Build & run the host unit + scenario test suite (no hardware)" }
+coverage = { cmd = "bash scripts/test.sh --coverage", description = "Run tests and emit a coverage report for the control core" }
 clean = { cmd = "bash scripts/clean.sh", description = "Remove build artifacts" }
