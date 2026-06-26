@@ -1,0 +1,39 @@
+[workspace]
+name = "erqos-firmware"
+description = "Firmware for the Erqos EQSP32 (ESP32-S3) industrial IoT PLC, built on the EQSP32 Arduino library."
+authors = ["Alex Pabouctsidis <alex.pabouctsidis@flyability.com>"]
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "osx-64", "linux-64"]
+version = "0.1.0"
+
+# --- Knobs you may want to tweak ---------------------------------------------
+# These are exposed to every task script as environment variables.
+[activation.env]
+# Pinned arduino-cli release (fetched into .arduino/bin by `pixi run setup`).
+ARDUINO_CLI_VERSION = "1.1.1"
+# ESP32 Arduino core. EQSP32's precompiled libEQSP32.a is built against the
+# v2 core, so we MUST stay on 2.x (Erqos: "supports up to esp32 v2 core").
+ESP32_CORE_VERSION = "2.0.17"
+# RadioLib is the only third-party header EQSP32.h pulls in (LoRa support).
+# Pinned to a version verified to compile against EQSP32 1.4.0 ("latest" also works).
+RADIOLIB_VERSION = "7.7.1"
+# Fully-qualified board name + the board options from Erqos' quickstart guide:
+# ESP32S3 Dev Module, 8M flash, "8M with spiffs" partition scheme.
+FQBN = "esp32:esp32:esp32s3:FlashSize=8M,PartitionScheme=default_8MB"
+# Serial port for upload/monitor. "auto" detects the only connected board.
+PORT = "auto"
+
+[dependencies]
+# arduino-cli isn't on conda-forge (it's a Go binary), so `pixi run setup`
+# fetches a pinned release with curl. Everything else (the xtensa-esp32s3
+# toolchain, esptool, the ESP32 core) is then managed by arduino-cli.
+curl = ">=8"
+
+[tasks]
+setup = { cmd = "bash scripts/setup.sh", description = "One-time: install arduino-cli, ESP32 core 2.0.17 and RadioLib into .arduino/" }
+build = { cmd = "bash scripts/build.sh", description = "Compile firmware/ for the EQSP32 (ESP32-S3)" }
+upload = { cmd = "bash scripts/upload.sh", description = "Flash the last build to a connected EQSP32 (set PORT=... or auto-detect)" }
+flash = { depends-on = ["build", "upload"], description = "Build then flash" }
+monitor = { cmd = "bash scripts/monitor.sh", description = "Open the serial monitor at 115200 baud" }
+boards = { cmd = "bash scripts/boards.sh", description = "List connected boards / serial ports" }
+clean = { cmd = "bash scripts/clean.sh", description = "Remove build artifacts" }

@@ -1,0 +1,6 @@
+# pixi environments
+.pixi/*
+!.pixi/config.toml
+
+# Self-contained Arduino toolchain + build output (managed by `pixi run setup`)
+.arduino/
