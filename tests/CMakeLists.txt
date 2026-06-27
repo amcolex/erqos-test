@@ -1,9 +1,8 @@
-# Host build for the RO skid control-core test suite.
+# Host build for the RO skid test suite.
 #
-# Compiles the platform-independent core (sensors / rgb_indicator /
-# ro_controller) against FakeEqsp32 — never firmware.ino, which needs the EQSP32
-# library. The core therefore must not include <Arduino.h>/<EQSP32.h>; if it
-# ever did, this build would fail, which is exactly the guardrail we want.
+# Compiles firmware/firmware.ino once (via sketch_tu.cpp) against the fake
+# Arduino + EQSP32 headers in tests/fakes, then drives setup()/loop() from the
+# test cases. No hardware, no vendor library.
 cmake_minimum_required(VERSION 3.20)
 project(ro_skid_tests CXX)
 
@@ -15,34 +14,28 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 add_compile_options(-Wall -Wextra)
 
-option(RO_COVERAGE "Build the control core with coverage instrumentation" OFF)
+option(RO_COVERAGE "Build with coverage instrumentation" OFF)
 
 find_package(doctest REQUIRED)
 
-set(CORE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../firmware/src)
-
-add_library(ro_core STATIC
-  ${CORE_DIR}/sensors.cpp
-  ${CORE_DIR}/rgb_indicator.cpp
-  ${CORE_DIR}/ro_controller.cpp
-)
-target_include_directories(ro_core PUBLIC ${CORE_DIR})
-
 add_executable(ro_tests
   doctest_main.cpp
+  sketch_tu.cpp           # compiles ../firmware/firmware.ino against the fakes
+  fakes/fakes.cpp
   support/plant_model.cpp
-  test_sensors.cpp
-  test_rgb.cpp
-  test_controller_unit.cpp
+  test_behaviors.cpp
   test_scenarios.cpp
 )
-target_include_directories(ro_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CORE_DIR})
-target_link_libraries(ro_tests PRIVATE ro_core doctest::doctest)
+# Order matters: tests/fakes must be found for <Arduino.h>/<EQSP32.h>.
+target_include_directories(ro_tests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+)
+target_link_libraries(ro_tests PRIVATE doctest::doctest)
 
 if(RO_COVERAGE)
-  target_compile_options(ro_core PRIVATE --coverage -O0 -g)
-  target_link_options(ro_core PUBLIC --coverage)
   target_compile_options(ro_tests PRIVATE --coverage -O0 -g)
+  target_link_options(ro_tests PRIVATE --coverage)
 endif()
 
 enable_testing()

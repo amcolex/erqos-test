@@ -13,23 +13,25 @@ machine, interlocks, latched faults, timed sequences, RGB status).
 - Task scripts live in `scripts/`; shared config is `scripts/_env.sh`; tunables
   (versions, `FQBN`, `PORT`) are in `pixi.toml` `[activation.env]`.
 
-## Control-logic architecture (read before editing firmware/src)
-- **The seam is the point.** ALL of `firmware/src/` is **platform-independent** —
-  no file there includes `<Arduino.h>`/`<EQSP32.h>`. The controller reaches
-  hardware only through `IEqsp32` (eqsp32_port.h), a 2-verb port mirroring the
-  EQSP32 API (`readPin`/`pinValue`), and takes time as a `tick(now_ms)` parameter
-  (no `millis()`). That is what makes it host-testable and deterministic.
-- `firmware.ino` is the ONLY file that includes `EQSP32.h`. It defines the 4-line
-  `Eqsp32Port` adapter (real EQSP32 -> `IEqsp32`) and `configurePins()` (pinMode
-  per the `ch::` channel map). There is no separate adapter .cpp.
-- Host tests (`tests/`, doctest via CMake) compile the same `firmware/src/*.cpp`
-  against `FakeEqsp32` (tests/support/fake_eqsp32.h). If the core gains a vendor
-  include, `pixi run test` breaks. `tests/support/plant_model.*` is a virtual
-  skid for closed-loop scenario tests.
-- Spec §11 setpoints live in the `Params` struct (ro_types.h); a test asserts the
-  defaults match the spec. §13 open points = one-line `Params` edits.
-- After editing core .cpp files, run BOTH `pixi run test` and `pixi run build`
-  (the same files compile into the firmware).
+## Architecture — single-file sketch, tested via fake headers
+- **The whole program is `firmware/firmware.ino`** in the classic sketch shape:
+  config constants, enums, scaling, the state machine, `setup()`, `loop()`. It
+  uses `eqsp32.readPin/pinValue` and `millis()` directly. No classes split out.
+- **The seam is the build, not the code.** The host test build (`tests/`, doctest
+  via CMake) compiles the *same* `firmware.ino` (`tests/sketch_tu.cpp` includes
+  it) against fake `tests/fakes/EQSP32.h` + `tests/fakes/Arduino.h` (found ahead
+  of the real ones on the include path). The fake EQSP32 scripts sensor readings
+  and records pump/valve/LED commands; fake `millis()` is a virtual clock.
+- **Tests are black-box**: drive the real `setup()`/`loop()` and assert on outputs
+  (pump/valves + RGB LED, which encodes state per spec §9). They do NOT read
+  internal state — the enums/`S` struct stay private to the sketch.
+- All mutable state is in one `AppState S` struct that `setup()` resets in one
+  line (`S = AppState{}`), so tests stay independent (each calls `sketchReset()`).
+- Spec §11 setpoints are `constexpr` near the top of the .ino; `test_behaviors.cpp`
+  threshold tests lock the values. §13 open points = one-line edits there.
+- `tests/fakes/EQSP32.h` keeps its OWN copy of the pin map — it MUST match the
+  `PIN_*` constants in firmware.ino.
+- After editing firmware.ino, run BOTH `pixi run test` and `pixi run build`.
 
 ## Non-obvious constraints — read before changing the toolchain
 - **Stay on ESP32 core 2.x (pinned 2.0.17).** `EQSP32/src/esp32s3/libEQSP32.a`
@@ -49,8 +51,8 @@ machine, interlocks, latched faults, timed sequences, RGB status).
   has no `depends=`, so deps are installed explicitly in `setup.sh`.
 
 ## EQSP32 I/O facts
-- `firmware/firmware.ino` is a thin entry (folder name must match the `.ino`
-  name); it only wires `Eqsp32Port` to `RoController` and pumps `tick()`.
+- `firmware/firmware.ino` is the whole sketch (folder name must match the `.ino`
+  name); it reads sensors, runs the state machine, and drives outputs in `loop()`.
 - API reference: top comment block of `EQSP32/src/EQSP32.h`. Pin values are
   0–1000 (= 0–100% PWM). `readPin` units: CIN = mA×100 (broken wire `<350`,
   over-current `-1`), AIN = mV, TIN = °C×10 (open `-9999` / short `9999`),

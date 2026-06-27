@@ -29,9 +29,9 @@ if [ "$COVERAGE" = 1 ]; then
   echo "==> Coverage (control core)"
   # clang emits LLVM coverage; gcovr drives it via 'llvm-cov gcov'. Best-effort.
   gcovr --root "$PROJECT_ROOT" \
-        --filter "$PROJECT_ROOT/firmware/src/" \
+        --filter "$PROJECT_ROOT/firmware/" \
         --gcov-executable "llvm-cov gcov" \
         --print-summary "$BUILD" \
-    || gcovr --root "$PROJECT_ROOT" --filter "$PROJECT_ROOT/firmware/src/" --print-summary "$BUILD" \
+    || gcovr --root "$PROJECT_ROOT" --filter "$PROJECT_ROOT/firmware/" --print-summary "$BUILD" \
     || echo "   (coverage report skipped — gcov backend unavailable)"
 fi

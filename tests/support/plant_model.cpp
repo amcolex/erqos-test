@@ -2,8 +2,6 @@
 #include "support/plant_model.h"
 #include <algorithm>
 
-namespace ro {
-
 // First-order approach toward target with time constant tau (linearised).
 float PlantModel::approach(float cur, float target, uint32_t dt_ms, uint32_t tau_ms) {
     if (tau_ms == 0) return target;
@@ -13,6 +11,7 @@ float PlantModel::approach(float cur, float target, uint32_t dt_ms, uint32_t tau
 }
 
 void PlantModel::step(uint32_t dt_ms) {
+    if (frozen) return;   // tests that script sensor inputs directly
     const float dt_min = dt_ms / 60000.0f;
 
     const bool pump = io_.pump;
@@ -68,5 +67,3 @@ void PlantModel::step(uint32_t dt_ms) {
     io_.setTdsInMgL(feedTds_mgL);
     io_.setTdsOutMgL(permeateTds_mgL);
 }
-
-} // namespace ro

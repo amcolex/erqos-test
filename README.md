@@ -17,54 +17,58 @@ a pinned, self-contained Arduino toolchain (nothing touches your global install)
 .
 ├── pixi.toml                  # environment + tasks (start here)
 ├── firmware/
-│   ├── firmware.ino           # the ONLY EQSP32 file: adapts it to the port, pin setup, loop
-│   └── src/                   # the control logic — pure C++, no vendor headers
-│       ├── ro_types.h         # State / Fault / Warnings / Params (spec §11 setpoints)
-│       ├── eqsp32_port.h      # IEqsp32 — the readPin/pinValue seam + channel map (spec §3)
-│       ├── sensors.{h,cpp}    # sensor scaling + flow integration (spec §4)
-│       ├── rgb_indicator.{h,cpp} # RGB priority + blink/fault codes (spec §9/§10)
-│       └── ro_controller.{h,cpp} # the state machine (spec §5-§10)
-├── tests/                     # native unit + scenario suite (doctest); FakeEqsp32 stands in
+│   └── firmware.ino           # THE WHOLE PROGRAM: config, state machine, setup(), loop()
+├── tests/                     # native test suite (doctest) — no hardware
+│   ├── fakes/
+│   │   ├── EQSP32.h           # fake EQSP32: scriptable readPin / recorded pinValue
+│   │   └── Arduino.h          # fake millis()/delay()/Serial (virtual clock)
+│   ├── sketch_tu.cpp          # compiles firmware.ino against the fakes
+│   ├── support/plant_model.*  # virtual RO skid physics for scenario tests
+│   ├── support/harness.h      # drive setup()/loop(); observe outputs + LED
+│   ├── test_behaviors.cpp     # scripted-input black-box checks + threshold tests
+│   └── test_scenarios.cpp     # closed-loop end-to-end scenarios
 ├── EQSP32/                    # vendor library (Erqos/EQSP32), used in place
 ├── scripts/                   # task implementations invoked by pixi
 └── .arduino/  build/          # toolchain, cores & build output (git-ignored)
 ```
 
-## Architecture — why it's testable
+## Architecture — a normal sketch that's still fully testable
 
-Everything under `firmware/src/` is **platform-independent C++** that never
-includes `<Arduino.h>` / `<EQSP32.h>`. It reaches hardware through two seams:
+`firmware.ino` is an ordinary Arduino sketch: setpoints, a state machine, helper
+functions, `setup()` and `loop()`, talking to `eqsp32.readPin()/pinValue()` and
+`millis()`. Nothing is split into classes or extra files.
 
-1. **I/O seam** — `IEqsp32` (in [eqsp32_port.h](firmware/src/eqsp32_port.h)): a
-   2-verb port that mirrors the EQSP32 itself — `readPin(pin)` / `pinValue(pin,
-   value)`, in EQSP32 native units. Production is a 4-line adapter over the real
-   `EQSP32` (inlined in [firmware.ino](firmware/firmware.ino)); tests use
-   `FakeEqsp32`, an in-memory stand-in.
-2. **Time seam** — the controller takes the current time as a parameter
-   (`tick(now_ms)`); it never calls `millis()`. So a 60-minute flush timer or a
-   10-minute TDS trip is exercised in microseconds, deterministically.
+It's testable because the **seam is the build, not the code**. The host test
+build puts fake [`EQSP32.h`](tests/fakes/EQSP32.h) + [`Arduino.h`](tests/fakes/Arduino.h)
+on the include path and compiles the *exact same sketch* against them
+([sketch_tu.cpp](tests/sketch_tu.cpp)):
 
-`firmware.ino` is the **only** file that includes `<EQSP32.h>`; it adapts the
-real device to `IEqsp32` and configures the pins. The host test build compiles
-the same `firmware/src/*.cpp` against `FakeEqsp32` — so if the core ever picked
-up a vendor/Arduino dependency, `pixi run test` would fail. That's the guardrail.
+- the **fake EQSP32** lets tests script sensor readings and record the
+  pump/valve/LED commands;
+- the **fake `millis()`** is a virtual clock the harness advances, so a 60-minute
+  flush or a 10-minute TDS trip runs in microseconds, deterministically.
+
+Tests are **black-box**: they drive the real `setup()`/`loop()` and assert on the
+observable outputs — the pump/valve commands and the RGB LED, which by spec §9
+encodes the operating state (e.g. solid green = running in spec, blue blink =
+supply-low pause, red N-blinks = fault code N). That verifies operator-visible
+behaviour, not internal variables.
 
 ## Testing
 
-Two layers, both run by `pixi run test` (no hardware, milliseconds):
+Both suites run with `pixi run test` (no hardware, runs in well under a second):
 
-- **Unit tests** — sensor scaling & fault sentinels, the flow integrator, RGB
-  priority + blink/fault-code patterns, and each permissive / timer / hysteresis
-  edge / fault in isolation (via a scriptable `FakeEqsp32` and a manual clock).
-- **Scenario tests** — a `PlantModel` simulates the skid's physics (pump+valves →
-  pressure ramps, tank fills, supply drains, flow ≈ 10 L/min; flush drops
-  pressure) and feeds it back through the *same* `IEqsp32` port the real device
-  uses.
-  Scenarios read like real operation: power-on → start → run → tank-full stop →
-  drain → restart; periodic flush; supply-low pause/resume; every fault + reset.
+- **`test_behaviors.cpp`** — scripted inputs (a frozen plant): power-on,
+  permissives, e-stop/reset, each fault + red blink-code, and threshold checks
+  that pin the spec §11 setpoints (49 vs 50 cm, 79 vs 80 °C, 250 vs 251 PSI, …).
+- **`test_scenarios.cpp`** — a `PlantModel` turns the pump/valve commands into
+  pressure/flow/level/temperature dynamics fed back as sensor readings, so
+  scenarios read like real operation: power-on → start → run → tank-full stop →
+  drain → restart; periodic flush; supply-low pause/resume; dry-run, over-
+  pressure, over-temp, TDS and broken-wire faults; warn-only fouling; reset.
 
-Current: **41 test cases / 306 assertions, ~99% line + 100% function coverage**
-of the control core (`pixi run coverage`).
+Current: **26 test cases / 98 assertions, ~99% line + 100% function coverage**
+of `firmware.ino` (`pixi run coverage`).
 
 ## Quick start
 
@@ -93,12 +97,12 @@ pixi run monitor    # serial console @ 115200 baud (one-line status per second)
 
 ## Tuning setpoints
 
-Every spec §11 setpoint is a named, defaulted field in `Params`
-([ro_types.h](firmware/src/ro_types.h)). The spec §13 "open points to confirm"
-(flow band, dry-run threshold, flash-rate mapping, debounce, fouling-stop
-behaviour) are all one-line edits there — a unit test asserts the defaults match
-the spec so changes are deliberate. Board/port/version knobs live in the
-`[activation.env]` block of `pixi.toml`.
+Every spec §11 setpoint is a named `constexpr` near the top of
+[firmware.ino](firmware/firmware.ino) (the "Configuration" section). The spec §13
+"open points to confirm" (flow band, dry-run threshold, flash-rate mapping,
+debounce, fouling-stop behaviour) are all one-line edits there; the threshold
+tests in `test_behaviors.cpp` lock the values down so changes are deliberate.
+Board/port/version knobs live in the `[activation.env]` block of `pixi.toml`.
 
 ## Toolchain
 
