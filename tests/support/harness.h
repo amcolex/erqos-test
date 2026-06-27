@@ -5,12 +5,12 @@
 #include <cstdint>
 #include <functional>
 #include "ro_controller.h"
-#include "support/fake_io.h"
+#include "support/fake_eqsp32.h"
 #include "support/plant_model.h"
 
 namespace ro {
 
-// Advance controller-only for duration_ms (the test holds the FakeSkidIO fixed).
+// Advance controller-only for duration_ms (the test holds the FakeEqsp32 fixed).
 inline uint32_t advance(RoController& c, uint32_t& now,
                         uint32_t duration_ms, uint32_t step_ms = 20) {
     uint32_t end = now + duration_ms;

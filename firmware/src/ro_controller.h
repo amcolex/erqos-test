@@ -1,12 +1,12 @@
 // ro_controller.h — the RO skid control state machine (spec §5-§11).
 //
-// PLATFORM-INDEPENDENT. Depends only on ISkidIO and an injected millisecond
-// clock (passed to tick()), so it runs identically on the EQSP32 and on a host
-// test rig. No <Arduino.h>, no millis(), no delay().
+// PLATFORM-INDEPENDENT. Depends only on IEqsp32 (the readPin/pinValue port) and
+// an injected millisecond clock (passed to tick()), so it runs identically on
+// the EQSP32 and on a host test rig. No <Arduino.h>, no millis(), no delay().
 #pragma once
 
 #include <cstdint>
-#include "io_interface.h"
+#include "eqsp32_port.h"
 #include "ro_types.h"
 #include "sensors.h"
 #include "rgb_indicator.h"
@@ -15,7 +15,7 @@ namespace ro {
 
 class RoController {
 public:
-    explicit RoController(ISkidIO& io, const Params& p = {}, const RgbTiming& timing = {});
+    explicit RoController(IEqsp32& eq, const Params& p = {}, const RgbTiming& timing = {});
 
     // Initialise internal state for power-on (spec §6.2). Call once before tick().
     void reset(uint32_t now_ms);
@@ -49,7 +49,7 @@ private:
     void startOrHold(uint32_t now);     // from a stopped state, decide where to go
     bool tdsFaultActive(uint32_t now);  // production fault, RUNNING only
 
-    ISkidIO&  io_;
+    IEqsp32&  eq_;
     Params    p_;
     RgbTiming timing_;
 

@@ -1,7 +1,7 @@
 # Host build for the RO skid control-core test suite.
 #
-# Compiles ONLY the platform-independent core (sensors / rgb_indicator /
-# ro_controller) — never eqsp32_io.cpp or firmware.ino, which need the EQSP32
+# Compiles the platform-independent core (sensors / rgb_indicator /
+# ro_controller) against FakeEqsp32 — never firmware.ino, which needs the EQSP32
 # library. The core therefore must not include <Arduino.h>/<EQSP32.h>; if it
 # ever did, this build would fail, which is exactly the guardrail we want.
 cmake_minimum_required(VERSION 3.20)

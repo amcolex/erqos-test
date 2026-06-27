@@ -17,15 +17,14 @@ a pinned, self-contained Arduino toolchain (nothing touches your global install)
 .
 ├── pixi.toml                  # environment + tasks (start here)
 ├── firmware/
-│   ├── firmware.ino           # thin Arduino entry: wires EQSP32 I/O -> controller
-│   └── src/                   # the control logic
+│   ├── firmware.ino           # the ONLY EQSP32 file: adapts it to the port, pin setup, loop
+│   └── src/                   # the control logic — pure C++, no vendor headers
 │       ├── ro_types.h         # State / Fault / Warnings / Params (spec §11 setpoints)
-│       ├── io_interface.h     # ISkidIO — the hardware seam + channel map (spec §3)
+│       ├── eqsp32_port.h      # IEqsp32 — the readPin/pinValue seam + channel map (spec §3)
 │       ├── sensors.{h,cpp}    # sensor scaling + flow integration (spec §4)
 │       ├── rgb_indicator.{h,cpp} # RGB priority + blink/fault codes (spec §9/§10)
-│       ├── ro_controller.{h,cpp} # the state machine (spec §5-§10) — pure C++
-│       └── eqsp32_io.{h,cpp}  # production ISkidIO adapter over the EQSP32
-├── tests/                     # native unit + scenario suite (doctest)
+│       └── ro_controller.{h,cpp} # the state machine (spec §5-§10)
+├── tests/                     # native unit + scenario suite (doctest); FakeEqsp32 stands in
 ├── EQSP32/                    # vendor library (Erqos/EQSP32), used in place
 ├── scripts/                   # task implementations invoked by pixi
 └── .arduino/  build/          # toolchain, cores & build output (git-ignored)
@@ -33,20 +32,22 @@ a pinned, self-contained Arduino toolchain (nothing touches your global install)
 
 ## Architecture — why it's testable
 
-The control logic is **platform-independent C++** that never includes
-`<Arduino.h>` / `<EQSP32.h>`. It reaches hardware through two seams:
+Everything under `firmware/src/` is **platform-independent C++** that never
+includes `<Arduino.h>` / `<EQSP32.h>`. It reaches hardware through two seams:
 
-1. **I/O seam** — `ISkidIO` (in [io_interface.h](firmware/src/io_interface.h)):
-   every sensor read / actuator write goes through this interface, in EQSP32
-   `readPin()` units. Production uses `Eqsp32SkidIO`; tests use a fake.
+1. **I/O seam** — `IEqsp32` (in [eqsp32_port.h](firmware/src/eqsp32_port.h)): a
+   2-verb port that mirrors the EQSP32 itself — `readPin(pin)` / `pinValue(pin,
+   value)`, in EQSP32 native units. Production is a 4-line adapter over the real
+   `EQSP32` (inlined in [firmware.ino](firmware/firmware.ino)); tests use
+   `FakeEqsp32`, an in-memory stand-in.
 2. **Time seam** — the controller takes the current time as a parameter
    (`tick(now_ms)`); it never calls `millis()`. So a 60-minute flush timer or a
    10-minute TDS trip is exercised in microseconds, deterministically.
 
-`firmware/src/*.cpp` are compiled into the firmware by `arduino-cli`. The host
-test build compiles **only** the portable core (`ro_controller`, `sensors`,
-`rgb_indicator`) — never `eqsp32_io.cpp` — so if the core ever picked up an
-Arduino dependency, `pixi run test` would fail. That's the guardrail.
+`firmware.ino` is the **only** file that includes `<EQSP32.h>`; it adapts the
+real device to `IEqsp32` and configures the pins. The host test build compiles
+the same `firmware/src/*.cpp` against `FakeEqsp32` — so if the core ever picked
+up a vendor/Arduino dependency, `pixi run test` would fail. That's the guardrail.
 
 ## Testing
 
@@ -54,10 +55,11 @@ Two layers, both run by `pixi run test` (no hardware, milliseconds):
 
 - **Unit tests** — sensor scaling & fault sentinels, the flow integrator, RGB
   priority + blink/fault-code patterns, and each permissive / timer / hysteresis
-  edge / fault in isolation (via a scriptable `FakeSkidIO` and a manual clock).
+  edge / fault in isolation (via a scriptable `FakeEqsp32` and a manual clock).
 - **Scenario tests** — a `PlantModel` simulates the skid's physics (pump+valves →
   pressure ramps, tank fills, supply drains, flow ≈ 10 L/min; flush drops
-  pressure) and feeds it back through the *same* `ISkidIO` the real adapter uses.
+  pressure) and feeds it back through the *same* `IEqsp32` port the real device
+  uses.
   Scenarios read like real operation: power-on → start → run → tank-full stop →
   drain → restart; periodic flush; supply-low pause/resume; every fault + reset.
 

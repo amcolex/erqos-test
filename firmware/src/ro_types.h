@@ -2,7 +2,7 @@
 //
 // This header is PLATFORM-INDEPENDENT: it must not include <Arduino.h> or
 // <EQSP32.h>. The whole control core is built around that rule so it can be
-// compiled and unit-tested natively on a host machine. See io_interface.h.
+// compiled and unit-tested natively on a host machine. See eqsp32_port.h.
 #pragma once
 
 #include <cstdint>

@@ -6,8 +6,8 @@
 
 namespace ro {
 
-RoController::RoController(ISkidIO& io, const Params& p, const RgbTiming& timing)
-    : io_(io), p_(p), timing_(timing) {}
+RoController::RoController(IEqsp32& eq, const Params& p, const RgbTiming& timing)
+    : eq_(eq), p_(p), timing_(timing) {}
 
 void RoController::reset(uint32_t now_ms) {
     state_ = State::STOP_ESTOP;
@@ -43,14 +43,14 @@ void RoController::latch(Fault f, uint32_t now) {
 // Sensor acquisition + scaling.
 // ---------------------------------------------------------------------------
 void RoController::readSensors(uint32_t now) {
-    r_.pressIn_raw   = io_.readPressureIn();
-    r_.pressOut_raw  = io_.readPressureOut();
-    r_.cleanTank_raw = io_.readCleanTank();
-    r_.supplyTank_raw= io_.readSupplyTank();
-    r_.tdsIn_mv      = io_.readTdsIn();
-    r_.tdsOut_mv     = io_.readTdsOut();
-    r_.motorTemp_raw = io_.readMotorTemp();
-    r_.runSwitch     = io_.readRunSwitch();
+    r_.pressIn_raw   = eq_.readPin(ch::PRESSURE_IN);
+    r_.pressOut_raw  = eq_.readPin(ch::PRESSURE_OUT);
+    r_.cleanTank_raw = eq_.readPin(ch::CLEAN_TANK);
+    r_.supplyTank_raw= eq_.readPin(ch::SUPPLY_TANK);
+    r_.tdsIn_mv      = eq_.readPin(ch::TDS_IN);
+    r_.tdsOut_mv     = eq_.readPin(ch::TDS_OUT);
+    r_.motorTemp_raw = eq_.readPin(ch::MOTOR_NTC);
+    r_.runSwitch     = eq_.readPin(ch::RUN_STOP) != 0;   // contact closed = RUN
 
     r_.pressIn_psi   = psi_from_cin(r_.pressIn_raw);
     r_.pressOut_psi  = psi_from_cin(r_.pressOut_raw);
@@ -60,8 +60,8 @@ void RoController::readSensors(uint32_t now) {
     r_.tdsOut_mgL    = tdsOut_from_ain(r_.tdsOut_mv);
     r_.motorTemp_c   = celsius_from_tin(r_.motorTemp_raw);
 
-    r_.feedFlow_lpm     = feedFlow_.update(io_.readFeedPulses(), now);
-    r_.permeateFlow_lpm = permeateFlow_.update(io_.readPermeatePulses(), now);
+    r_.feedFlow_lpm     = feedFlow_.update(eq_.readPin(ch::FLOW_IN), now);
+    r_.permeateFlow_lpm = permeateFlow_.update(eq_.readPin(ch::FLOW_OUT), now);
     r_.recovery_pct = (r_.feedFlow_lpm > 0.01f)
                           ? (r_.permeateFlow_lpm / r_.feedFlow_lpm) * 100.0f
                           : 0.0f;
@@ -236,12 +236,14 @@ void RoController::writeOutputs(uint32_t now) {
     if (!pump_ && prevPump_) pumpOffSince_ = now;
     prevPump_ = pump_;
 
-    io_.setPump(pump_);
-    io_.setSupplyValve(supply_);
-    io_.setFlushValve(flush_);
+    eq_.pinValue(ch::PUMP,         pump_   ? PIN_ON : PIN_OFF);
+    eq_.pinValue(ch::SUPPLY_VALVE, supply_ ? PIN_ON : PIN_OFF);
+    eq_.pinValue(ch::FLUSH_VALVE,  flush_  ? PIN_ON : PIN_OFF);
 
     rgb_ = resolveRgb(state_, fault_, warn_, now, timing_);
-    io_.setRgb(rgb_.r, rgb_.g, rgb_.b);
+    eq_.pinValue(ch::LED_R, rgb_.r ? PIN_ON : PIN_OFF);
+    eq_.pinValue(ch::LED_G, rgb_.g ? PIN_ON : PIN_OFF);
+    eq_.pinValue(ch::LED_B, rgb_.b ? PIN_ON : PIN_OFF);
 }
 
 // ---------------------------------------------------------------------------

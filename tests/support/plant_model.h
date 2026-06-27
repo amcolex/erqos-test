@@ -1,6 +1,6 @@
 // plant_model.h — a virtual RO skid for closed-loop scenario testing.
 //
-// Each step() reads the actuator commands the controller wrote to FakeSkidIO and
+// Each step() reads the actuator commands the controller wrote to FakeEqsp32 and
 // evolves the process variables (pressure, flow, permeate, clean-tank level,
 // motor temperature, flow-meter pulses) over dt, writing them back as sensor
 // readings. This lets scenario tests exercise the controller exactly as it would
@@ -10,13 +10,13 @@
 // (fouling, dry feed, supply low, bad permeate, hot motor, broken sensor).
 #pragma once
 
-#include "support/fake_io.h"
+#include "support/fake_eqsp32.h"
 
 namespace ro {
 
 class PlantModel {
 public:
-    explicit PlantModel(FakeSkidIO& io) : io_(io) {}
+    explicit PlantModel(FakeEqsp32& io) : io_(io) {}
 
     // --- Process state (engineering units) ---------------------------------
     float pressIn_psi   = 0.0f;
@@ -51,7 +51,7 @@ public:
     void step(uint32_t dt_ms);
 
 private:
-    FakeSkidIO& io_;
+    FakeEqsp32& io_;
     float pulseCarryFeed_ = 0.0f;
     float pulseCarryPerm_ = 0.0f;
     static float approach(float cur, float target, uint32_t dt_ms, uint32_t tau_ms);

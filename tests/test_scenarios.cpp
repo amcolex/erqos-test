@@ -6,7 +6,7 @@
 // sensor readings. Timeouts and tolerances keep the assertions robust.
 #include <doctest/doctest.h>
 #include "ro_controller.h"
-#include "support/fake_io.h"
+#include "support/fake_eqsp32.h"
 #include "support/plant_model.h"
 #include "support/harness.h"
 
@@ -20,7 +20,7 @@ static bool isFlushing(const RoController& c)  { return c.state() == State::FLUS
 static bool isYellow(Rgb c) { return c == RGB_YELLOW; }
 
 TEST_CASE("happy path: power-on -> start -> run, then tank-full hysteresis (spec §6.2/§6.4/§6.7)") {
-    FakeSkidIO io; PlantModel plant(io);
+    FakeEqsp32 io; PlantModel plant(io);
     plant.cleanTank_cm = 350.0f;   // start near full to keep the test quick
     plant.supplyTank_cm = 200.0f;
     RoController c(io); c.reset(0);
@@ -54,7 +54,7 @@ TEST_CASE("periodic membrane flush then resume (spec §6.6)") {
     p.settleWindow_ms = 1000;
     p.flushInterval_ms = 2u * 60000u;   // scaled for test speed (default 60 min)
     p.flushDuration_ms = 30u * 1000u;   // scaled (default 5 min)
-    FakeSkidIO io; PlantModel plant(io);
+    FakeEqsp32 io; PlantModel plant(io);
     plant.cleanTank_cm = 100.0f;
     plant.cleanDraw_lpm = 2.0f;         // balance permeate so the tank never fills
     RoController c(io, p); c.reset(0);
@@ -78,7 +78,7 @@ TEST_CASE("supply-low during a flush pauses the pump (spec §6.6/§6.8)") {
     p.settleWindow_ms = 1000;
     p.flushInterval_ms = 2u * 60000u;
     p.flushDuration_ms = 60u * 1000u;   // long enough to interrupt mid-flush
-    FakeSkidIO io; PlantModel plant(io);
+    FakeEqsp32 io; PlantModel plant(io);
     plant.cleanTank_cm = 100.0f; plant.cleanDraw_lpm = 2.0f; plant.supplyTank_cm = 200.0f;
     RoController c(io, p); c.reset(0);
     uint32_t now = 0;
@@ -92,7 +92,7 @@ TEST_CASE("supply-low during a flush pauses the pump (spec §6.6/§6.8)") {
 }
 
 TEST_CASE("supply-low pause and resume with hysteresis (spec §6.8)") {
-    FakeSkidIO io; PlantModel plant(io);
+    FakeEqsp32 io; PlantModel plant(io);
     plant.supplyTank_cm = 200.0f; plant.cleanTank_cm = 150.0f;
     RoController c(io); c.reset(0);
     uint32_t now = 0;
@@ -118,7 +118,7 @@ TEST_CASE("minimum ON-time defers a tank-full stop (spec §6.5)") {
     Params p;
     p.settleWindow_ms = 500;
     p.minOnTime_ms = 10000;
-    FakeSkidIO io; PlantModel plant(io);
+    FakeEqsp32 io; PlantModel plant(io);
     plant.cleanTank_cm = 370.0f;        // starts below the 380 restart threshold
     plant.recoveryFrac = 0.5f;          // strong permeate so the tank fills fast
     plant.cleanDraw_lpm = 0.0f;
@@ -136,7 +136,7 @@ TEST_CASE("minimum ON-time defers a tank-full stop (spec §6.5)") {
 }
 
 TEST_CASE("fault: dry-run (no feed) latches and stops (spec §10 code 2)") {
-    FakeSkidIO io; PlantModel plant(io);
+    FakeEqsp32 io; PlantModel plant(io);
     plant.blockFeed = true;             // no feed water
     RoController c(io); c.reset(0);
     uint32_t now = 0;
@@ -146,7 +146,7 @@ TEST_CASE("fault: dry-run (no feed) latches and stops (spec §10 code 2)") {
 }
 
 TEST_CASE("fault: over-pressure from heavy fouling (spec §8/§10 code 4)") {
-    FakeSkidIO io; PlantModel plant(io);
+    FakeEqsp32 io; PlantModel plant(io);
     plant.foulingOffset_psi = 100.0f;   // ~275 PSI producing -> over the 250 trip
     RoController c(io); c.reset(0);
     uint32_t now = 0;
@@ -156,7 +156,7 @@ TEST_CASE("fault: over-pressure from heavy fouling (spec §8/§10 code 4)") {
 }
 
 TEST_CASE("fault: motor over-temperature (spec §10 code 1)") {
-    FakeSkidIO io; PlantModel plant(io);
+    FakeEqsp32 io; PlantModel plant(io);
     plant.cleanTank_cm = 100.0f;
     plant.motorRunTemp_c = 85.0f;       // climbs past the 80 C limit while running
     RoController c(io); c.reset(0);
@@ -167,7 +167,7 @@ TEST_CASE("fault: motor over-temperature (spec §10 code 1)") {
 }
 
 TEST_CASE("fault: broken pressure-sensor wire (spec §10 code 5)") {
-    FakeSkidIO io; PlantModel plant(io);
+    FakeEqsp32 io; PlantModel plant(io);
     plant.breakPressInWire = true;      // ~0 mA on the loop
     RoController c(io); c.reset(0);
     uint32_t now = 0;
@@ -176,7 +176,7 @@ TEST_CASE("fault: broken pressure-sensor wire (spec §10 code 5)") {
 }
 
 TEST_CASE("fault: permeate TDS over limit for 10 min (spec §7/§10 code 3)") {
-    FakeSkidIO io; PlantModel plant(io);
+    FakeEqsp32 io; PlantModel plant(io);
     plant.cleanTank_cm = 100.0f;
     plant.permeateTds_mgL = 250.0f;     // out of spec
     RoController c(io); c.reset(0);
@@ -195,7 +195,7 @@ TEST_CASE("fault: permeate TDS over limit for 10 min (spec §7/§10 code 3)") {
 }
 
 TEST_CASE("warning: early fouling = high feed pressure, warn-only (spec §8)") {
-    FakeSkidIO io; PlantModel plant(io);
+    FakeEqsp32 io; PlantModel plant(io);
     plant.cleanTank_cm = 100.0f;
     plant.foulingOffset_psi = 30.0f;    // ~205 PSI: above 200, below the 250 trip
     RoController c(io); c.reset(0);
@@ -211,7 +211,7 @@ TEST_CASE("warning: early fouling = high feed pressure, warn-only (spec §8)") {
 }
 
 TEST_CASE("warning: cleaning required = high pressure + low permeate (spec §8)") {
-    FakeSkidIO io; PlantModel plant(io);
+    FakeEqsp32 io; PlantModel plant(io);
     plant.cleanTank_cm = 100.0f;
     plant.foulingOffset_psi = 30.0f;    // ~205 PSI
     plant.recoveryFrac = 0.05f;         // permeate ~0.5 L/min (< 1 = "low")
@@ -225,7 +225,7 @@ TEST_CASE("warning: cleaning required = high pressure + low permeate (spec §8)"
 }
 
 TEST_CASE("warning: recovery out of band, warn-only (spec §7)") {
-    FakeSkidIO io; PlantModel plant(io);
+    FakeEqsp32 io; PlantModel plant(io);
     plant.cleanTank_cm = 100.0f;
     plant.recoveryFrac = 0.05f;         // 5% recovery < 10% band; pressure normal
     RoController c(io); c.reset(0);
@@ -240,7 +240,7 @@ TEST_CASE("warning: recovery out of band, warn-only (spec §7)") {
 }
 
 TEST_CASE("production alarms are masked during the start settling window (spec §6.4)") {
-    FakeSkidIO io; PlantModel plant(io);
+    FakeEqsp32 io; PlantModel plant(io);
     plant.cleanTank_cm = 100.0f;
     plant.foulingOffset_psi = 30.0f;    // would warn once running
     RoController c(io); c.reset(0);
@@ -259,7 +259,7 @@ TEST_CASE("production alarms are masked during the start settling window (spec �
 }
 
 TEST_CASE("fault recovery: STOP clears the latch, then RUN restarts (spec §6.1/§10)") {
-    FakeSkidIO io; PlantModel plant(io);
+    FakeEqsp32 io; PlantModel plant(io);
     plant.cleanTank_cm = 100.0f;
     plant.motorRunTemp_c = 85.0f;
     RoController c(io); c.reset(0);

@@ -1,4 +1,4 @@
-// test_controller_unit.cpp — controller logic in isolation (FakeSkidIO + manual
+// test_controller_unit.cpp — controller logic in isolation (FakeEqsp32 + manual
 // clock). Covers power-on behaviour, start permissives, the minimum OFF-time,
 // emergency stop / reset, and each immediate safety fault. Sequences that need
 // sustained realistic flow (running, hysteresis, flush, TDS) live in
@@ -6,14 +6,14 @@
 #include <doctest/doctest.h>
 #include "ro_controller.h"
 #include "sensors.h"
-#include "support/fake_io.h"
+#include "support/fake_eqsp32.h"
 #include "support/harness.h"
 
 using namespace ro;
 
 // A sane "at rest" sensor picture: ample supply, part-full product tank, cool
 // motor, no pressure, clean permeate, RUN selected. No feed flow (pump is off).
-static void healthy(FakeSkidIO& io) {
+static void healthy(FakeEqsp32& io) {
     io.runSwitch = true;
     io.setSupplyCm(200);
     io.setCleanCm(100);
@@ -26,7 +26,7 @@ static void healthy(FakeSkidIO& io) {
 }
 
 TEST_CASE("Params defaults match spec §11") {
-    FakeSkidIO io; RoController c(io);
+    FakeEqsp32 io; RoController c(io);
     const Params& p = c.params();
     CHECK(p.supplyMin_cm == 50.0f);
     CHECK(p.supplyResume_cm == 60.0f);
@@ -51,7 +51,7 @@ TEST_CASE("Params defaults match spec §11") {
 }
 
 TEST_CASE("power-on: selector RUN starts automatically (spec §6.2)") {
-    FakeSkidIO io; healthy(io);
+    FakeEqsp32 io; healthy(io);
     RoController c(io); c.reset(0);
     uint32_t now = 0;
     advance(c, now, 2000);
@@ -62,7 +62,7 @@ TEST_CASE("power-on: selector RUN starts automatically (spec §6.2)") {
 }
 
 TEST_CASE("power-on: selector STOP stays halted (spec §6.2)") {
-    FakeSkidIO io; healthy(io); io.runSwitch = false;
+    FakeEqsp32 io; healthy(io); io.runSwitch = false;
     RoController c(io); c.reset(0);
     uint32_t now = 0;
     advance(c, now, 2000);
@@ -72,7 +72,7 @@ TEST_CASE("power-on: selector STOP stays halted (spec §6.2)") {
 }
 
 TEST_CASE("start permissive: supply tank low -> PAUSED (spec §6.3/§6.8)") {
-    FakeSkidIO io; healthy(io); io.setSupplyCm(40);
+    FakeEqsp32 io; healthy(io); io.setSupplyCm(40);
     RoController c(io); c.reset(0);
     uint32_t now = 0; advance(c, now, 1000);
     CHECK(c.state() == State::PAUSED_SUPPLY_LOW);
@@ -80,7 +80,7 @@ TEST_CASE("start permissive: supply tank low -> PAUSED (spec §6.3/§6.8)") {
 }
 
 TEST_CASE("start permissive: clean tank full -> STOPPED (spec §6.3/§6.7)") {
-    FakeSkidIO io; healthy(io); io.setCleanCm(390);  // >= restart threshold
+    FakeEqsp32 io; healthy(io); io.setCleanCm(390);  // >= restart threshold
     RoController c(io); c.reset(0);
     uint32_t now = 0; advance(c, now, 1000);
     CHECK(c.state() == State::STOPPED_TANK_FULL);
@@ -88,7 +88,7 @@ TEST_CASE("start permissive: clean tank full -> STOPPED (spec §6.3/§6.7)") {
 }
 
 TEST_CASE("safety fault: motor over-temperature (spec §10 code 1)") {
-    FakeSkidIO io; healthy(io); io.setMotorC(85);
+    FakeEqsp32 io; healthy(io); io.setMotorC(85);
     RoController c(io); c.reset(0);
     uint32_t now = 0; advance(c, now, 300);
     CHECK(c.state() == State::FAULT);
@@ -99,7 +99,7 @@ TEST_CASE("safety fault: motor over-temperature (spec §10 code 1)") {
 }
 
 TEST_CASE("safety fault: over-pressure (spec §10 code 4)") {
-    FakeSkidIO io; healthy(io); io.setPressureInPsi(260);
+    FakeEqsp32 io; healthy(io); io.setPressureInPsi(260);
     RoController c(io); c.reset(0);
     uint32_t now = 0; advance(c, now, 300);
     CHECK(c.state() == State::FAULT);
@@ -107,7 +107,7 @@ TEST_CASE("safety fault: over-pressure (spec §10 code 4)") {
 }
 
 TEST_CASE("safety fault: 4-20 mA broken wire (spec §10 code 5)") {
-    FakeSkidIO io; healthy(io); io.pressIn_raw = 300;  // ~3 mA
+    FakeEqsp32 io; healthy(io); io.pressIn_raw = 300;  // ~3 mA
     RoController c(io); c.reset(0);
     uint32_t now = 0; advance(c, now, 300);
     CHECK(c.state() == State::FAULT);
@@ -115,7 +115,7 @@ TEST_CASE("safety fault: 4-20 mA broken wire (spec §10 code 5)") {
 }
 
 TEST_CASE("safety fault: NTC open circuit is a sensor fault (spec §10 code 5)") {
-    FakeSkidIO io; healthy(io); io.motorTemp_raw = TIN_OPEN;
+    FakeEqsp32 io; healthy(io); io.motorTemp_raw = TIN_OPEN;
     RoController c(io); c.reset(0);
     uint32_t now = 0; advance(c, now, 300);
     CHECK(c.state() == State::FAULT);
@@ -123,7 +123,7 @@ TEST_CASE("safety fault: NTC open circuit is a sensor fault (spec §10 code 5)")
 }
 
 TEST_CASE("safety fault: dry-run after the grace time (spec §7/§10 code 2)") {
-    FakeSkidIO io; healthy(io);   // pump will run but no feed pulses are produced
+    FakeEqsp32 io; healthy(io);   // pump will run but no feed pulses are produced
     RoController c(io); c.reset(0);
     uint32_t now = 0;
     advance(c, now, 8000);
@@ -136,7 +136,7 @@ TEST_CASE("safety fault: dry-run after the grace time (spec §7/§10 code 2)") {
 }
 
 TEST_CASE("emergency stop is immediate (spec §6.1)") {
-    FakeSkidIO io; healthy(io);
+    FakeEqsp32 io; healthy(io);
     RoController c(io); c.reset(0);
     uint32_t now = 0; advance(c, now, 2000);
     REQUIRE(c.state() == State::STARTING);
@@ -148,7 +148,7 @@ TEST_CASE("emergency stop is immediate (spec §6.1)") {
 }
 
 TEST_CASE("moving to STOP clears a latched fault (spec §6.1/§10)") {
-    FakeSkidIO io; healthy(io); io.setMotorC(85);
+    FakeEqsp32 io; healthy(io); io.setMotorC(85);
     RoController c(io); c.reset(0);
     uint32_t now = 0; advance(c, now, 300);
     REQUIRE(c.fault() == Fault::MOTOR_OVERTEMP);
@@ -164,7 +164,7 @@ TEST_CASE("moving to STOP clears a latched fault (spec §6.1/§10)") {
 }
 
 TEST_CASE("minimum OFF-time gates a restart (spec §6.5)") {
-    FakeSkidIO io; healthy(io);
+    FakeEqsp32 io; healthy(io);
     RoController c(io); c.reset(0);
     uint32_t now = 0;
     advance(c, now, 2000);                    // STARTING, pump on

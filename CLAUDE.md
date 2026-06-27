@@ -14,16 +14,18 @@ machine, interlocks, latched faults, timed sequences, RGB status).
   (versions, `FQBN`, `PORT`) are in `pixi.toml` `[activation.env]`.
 
 ## Control-logic architecture (read before editing firmware/src)
-- **The seam is the point.** Control logic in `firmware/src/{ro_controller,
-  sensors,rgb_indicator}.{h,cpp}` + `ro_types.h` is **platform-independent** — it
-  must NOT include `<Arduino.h>`/`<EQSP32.h>`. It reaches hardware only through
-  `ISkidIO` (io_interface.h) and takes time as a `tick(now_ms)` parameter (no
-  `millis()`). That is what makes it host-testable and deterministic.
-- `eqsp32_io.{h,cpp}` is the ONLY core file that includes `EQSP32.h` (plus the
-  `.ino`). It maps `ISkidIO` to EQSP32 pins per the `ch::` channel map.
-- Host tests (`tests/`, doctest via CMake) compile only the portable core — never
-  `eqsp32_io.cpp`. If the core gains an Arduino include, `pixi run test` breaks.
-  `tests/support/plant_model.*` is a virtual skid for closed-loop scenario tests.
+- **The seam is the point.** ALL of `firmware/src/` is **platform-independent** —
+  no file there includes `<Arduino.h>`/`<EQSP32.h>`. The controller reaches
+  hardware only through `IEqsp32` (eqsp32_port.h), a 2-verb port mirroring the
+  EQSP32 API (`readPin`/`pinValue`), and takes time as a `tick(now_ms)` parameter
+  (no `millis()`). That is what makes it host-testable and deterministic.
+- `firmware.ino` is the ONLY file that includes `EQSP32.h`. It defines the 4-line
+  `Eqsp32Port` adapter (real EQSP32 -> `IEqsp32`) and `configurePins()` (pinMode
+  per the `ch::` channel map). There is no separate adapter .cpp.
+- Host tests (`tests/`, doctest via CMake) compile the same `firmware/src/*.cpp`
+  against `FakeEqsp32` (tests/support/fake_eqsp32.h). If the core gains a vendor
+  include, `pixi run test` breaks. `tests/support/plant_model.*` is a virtual
+  skid for closed-loop scenario tests.
 - Spec §11 setpoints live in the `Params` struct (ro_types.h); a test asserts the
   defaults match the spec. §13 open points = one-line `Params` edits.
 - After editing core .cpp files, run BOTH `pixi run test` and `pixi run build`
@@ -48,7 +50,7 @@ machine, interlocks, latched faults, timed sequences, RGB status).
 
 ## EQSP32 I/O facts
 - `firmware/firmware.ino` is a thin entry (folder name must match the `.ino`
-  name); it only wires `Eqsp32SkidIO` to `RoController` and pumps `tick()`.
+  name); it only wires `Eqsp32Port` to `RoController` and pumps `tick()`.
 - API reference: top comment block of `EQSP32/src/EQSP32.h`. Pin values are
   0–1000 (= 0–100% PWM). `readPin` units: CIN = mA×100 (broken wire `<350`,
   over-current `-1`), AIN = mV, TIN = °C×10 (open `-9999` / short `9999`),
